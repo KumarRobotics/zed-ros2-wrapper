@@ -48,9 +48,9 @@
             # 'zedx.yaml', 'zedxmini.yaml', 'virtual.yaml' files
 
         sensors:
-            publish_imu_tf: false # [overwritten by launch file options] enable/disable the IMU TF broadcasting
+            publish_imu_tf: true # [overwritten by launch file options] enable/disable the IMU TF broadcasting
             sensors_image_sync: false # Synchronize Sensors messages with latest published video/depth message
-            sensors_pub_rate: 100. # frequency of publishing of sensors data. MAX: 400. - MIN: grab rate
+            sensors_pub_rate: 400. # frequency of publishing of sensors data. MAX: 400. - MIN: grab rate
 
         region_of_interest:
             automatic_roi: false # Enable the automatic ROI generation to automatically detect part of the robot in the FoV and remove them from the processing. Note: if enabled the value of `manual_polygon` is ignored
@@ -67,7 +67,7 @@
             apply_to_spatial_mapping: true # Apply ROI to spatial mapping processing
 
         depth:
-            depth_mode: 'NEURAL_LIGHT' # Matches the ZED SDK setting: 'NONE', 'PERFORMANCE', 'QUALITY', 'ULTRA', 'NEURAL', 'NEURAL_PLUS' - Note: if 'NONE' all the modules that requires depth extraction are disabled by default (Pos. Tracking, Obj. Detection, Mapping, ...)
+            depth_mode: 'PERFORMANCE' # Matches the ZED SDK setting: 'NONE', 'PERFORMANCE', 'QUALITY', 'ULTRA', 'NEURAL', 'NEURAL_PLUS' - Note: if 'NONE' all the modules that requires depth extraction are disabled by default (Pos. Tracking, Obj. Detection, Mapping, ...)
             depth_stabilization: 30 # Forces positional tracking to start if major than 0 - Range: [0,100]
             openni_depth_mode: false # 'false': 32bit float [meters], 'true': 16bit unsigned int [millimeters]
             point_cloud_freq: 10.0 # [DYNAMIC] Frequency of the pointcloud publishing. This value must be equal or less than the camera framerate.
@@ -87,9 +87,9 @@
             map_frame: 'map'
             odometry_frame: 'odom'
             area_memory: true # Enable to detect loop closure
-            area_file_path: '~/test_area_memory.area' # Path to the area memory file for relocalization and loop closure in a previously explored environment. 
-            save_area_memory_on_closing: true # Save Area memory before closing the camera if `area_file_path` is not empty. You can also use the `save_area_memory` service to save the area memory at any time.
-            reset_odom_with_loop_closure: true # Re-initialize odometry to the last valid pose when loop closure happens (reset camera odometry drift)
+            area_file_path: '' # Path to the area memory file for relocalization and loop closure in a previously explored environment. 
+            save_area_memory_on_closing: false # Save Area memory before closing the camera if `area_file_path` is not empty. You can also use the `save_area_memory` service to save the area memory at any time.
+            reset_odom_with_loop_closure: false # Re-initialize odometry to the last valid pose when loop closure happens (reset camera odometry drift)
             depth_min_range: 0.0 # Set this value for removing fixed zones of the robot in the FoV of the camerafrom the visual odometry evaluation
             set_as_static: false # If 'true' the camera will be static and not move in the environment
             set_gravity_as_origin: true # If 'true' align the positional tracking world to imu gravity measurement. Keep the yaw from the user initial pose.
