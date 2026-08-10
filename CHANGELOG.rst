@@ -1,6 +1,99 @@
 LATEST CHANGES
 ==============
 
+2026-07-29
+----------
+- Fixed version check error on `zed_msgs` that blocked `scene_illuminance` information in health status messages.
+- Fixed `scene_illuminance` reporting a value frozen at start-up in both the health status message and the `Scene Illuminance` diagnostic. The metric was only read while camera video settings were being applied, so it stopped updating once they were applied and then changed only when a video parameter was modified. It is now refreshed while grabbing, and tracks the actual scene light level.
+
+v5.4.1
+------
+- Fixed camera video settings (exposure, gain, white balance, brightness, etc.) not being reliably applied at start-up. The node now always enforces the configured values when it starts, instead of keeping whatever was left in the camera by a previous application (e.g. ZED Explorer or an earlier run). This fixes two identically-configured cameras showing different images, and the case where the image did not match the configured exposure/gain after opening the node. The apply is also retried if the camera is not ready yet (e.g. during USB bandwidth contention when several cameras are opened at once).
+- Fixed unstable IMU publishing rate (issues #249 and #445). Sensor data is now retrieved by draining the full IMU FIFO with `getSensorsDataBatch()` instead of polling only the latest sample, so no sample is dropped and every published sample keeps its hardware timestamp. The drained stream is decimated to the requested `sensors.sensors_pub_rate` with a fractional accumulator that selects samples uniformly, so the parameter is still honored while the inter-sample interval stays constant. Measured on a ZED 2i: `sensors_pub_rate` 100/200/400 Hz yields a steady 101/202/404 Hz output with std-dev ~0.07 ms (vs ~1 ms before, with frequent missed-sample gaps up to ~12.7 ms).
+- Added support for ROS 2 Lyrical Luth
+- Improved Docker support:
+
+  - Single parameterized `Dockerfile` with new `build_desktop.sh`/`build_jetson.sh` scripts, replacing the previous per-variant Dockerfiles.
+  - Added Jetson cross-compilation from an x86_64 host via QEMU.
+  - `--sdk-url` now also accepts a local ZED SDK `.run` file, not just a URL.
+
+
+v5.4.0
+----------
+- Improved point cloud publishing by eliminating one full-cloud copy per published frame (~44 MB at HD2K, proportional at lower res) and removing a second full-cloud CPU allocation.
+- Fixed node lock when calling the `set_svo_frame` service with Positional Tracking enabled
+- Fixed Disparity Map data (bad pixel value sign).
+- Changed disparity map publishing policy:
+
+  - The topic `~/disparity/disparity_image` of type `stereo_msgs/msg/disparity_image` is now obsolete.  
+  - Added two new topics:
+
+    - `~/disparity/map` of type `stereo_msgs/msg/disparity_image` containing the Disparity Map for depth processing. This replaces the obsolete `~/disparity/disparity_image` topic.
+      Use `ros2 run image_view disparity_view --ros-args -r image:=/zed/zed_node/disparity/disparity_image` to visualize this topic.
+    - `~/disparity/image` of type `sensor_msgs/msg/image` containing the Normalized Disparity Map as an image for visualization purposes. You can subscribe to this topic in RViz2.
+
+v5.3
+----------
+- Added voxel point cloud support. When `depth.voxel_point_cloud` is enabled, the point cloud topic publishes voxel-decimated data using `retrieveVoxelMeasure()`. New parameters: `depth.voxel_size_mm` (voxel cell size in millimeters), `depth.voxel_resolution_mode` (`FIXED`, `STEREO_UNCERTAINTY`, `LINEAR`), and `depth.voxel_resolution_scale`. All voxel parameters are dynamically reconfigurable.
+- Added handling of `ERROR_CODE::CAMERA_EXCEEDS_BANDWIDTH` during camera open in both stereo and mono components. When a GMSL PHY CSI bandwidth overflow is detected, the node logs an error and stops initialization.
+- Added `XVGA` and `TXGA` as valid `grab_resolution` options for ZED X HDR camera configurations (`zedxhdr`, `zedxhdrmax`, `zedxhdrmini`, `zedxonehdr`).
+- Added `XVGA` and `TXGA` resolution parsing in both stereo (`ZedCamera`) and mono (`ZedCameraOne`) components.
+- Added support for ZED X Nano camera: new `zedxnano` model with dedicated configuration file, URDF macro, and launch file integration.
+- Added `video.ae_antibanding` parameter for ZED X cameras to control auto-exposure anti-banding mode (0=OFF, 1=AUTO, 2=50Hz, 3=60Hz). Dynamically reconfigurable.
+- Added `Scene Illuminance` field to the diagnostic output for ZED X cameras (read-only metric reflecting the level of light in the scene).
+- Added `scene_illuminance` field (int32, units 0.1 lux) to the `HealthStatusStamped` message published on `~/status/health`. Value -1 indicates the metric is unsupported by the connected camera. Requires the matching `zed_msgs` v5.3.
+- Added `svo.svo_encoding_preset` parameter (`DEFAULT`, `ULTRAFAST`, `FAST`, `MEDIUM`, `SLOW`) to choose the SVO encoder speed/quality preset when starting a recording.
+- Added `svo.decryption_key` parameter (stereo and mono) to open encrypted SVO files. The key/passphrase is forwarded to the SDK via `InitParameters::svo_decryption_key`.
+- Added `general.sdk_use_monotonic_clock` parameter that switches the SDK to `TIMESTAMP_CLOCK::MONOTONIC_CLOCK` so timestamps are immune to host clock step adjustments (NTP/PTP). When combined with `debug.use_pub_timestamps: false`, an offset captured at camera open is applied so published Header stamps remain ROS-epoch-shaped while inter-frame deltas stay monotonic. Process-wide setting; in a composition the first node to open wins (subsequent nodes log a warning and fall back to the active clock).
+- IPC is now handled automatically disabling it when NITROS is enabled and enabling it when NITROS is disabled. The `debug.disable_nitros` parameter can be used to disable NITROS and enable IPC if needed.
+- Added support to `rclcpp::TypeAdapter` for better handling of Image messages:
+
+  - A `TypeAdapter` publisher handles the base "raw" topic. Intra-process subscribers receive `StampedSlMat` (wrapping `sl::Mat`) directly without serialization. Inter-process subscribers receive `sensor_msgs/msg/Image` via automatic `TypeAdapter` conversion.
+  - An `image_transport` publisher handles the transport-specific topics (e.g., `compressed`, `theora`). The "raw" transport is disabled to avoid duplicate messages.
+  - Image transport plugins are now filtered by topic type: visual topics (IMAGE) only advertise `compressed` and `theora`, while measurement topics (MEASURE) only advertise `compressedDepth`. This prevents silent data corruption from incompatible plugin/encoding combinations (e.g., JPEG on float depth).
+  - When the package `isaac_ros_nitros` is installed and NITROS not disabled via the `debug.disable_nitros` parameter, NITROS publishers take priority, and neither `TypeAdapter` nor `image_transport` publishers are created.
+
+v5.2.2
+----------
+- Default Positional Tracking mode changed back to `GEN_1` until the stability and reliability of `GEN_3` is improved. 
+  Users can still select a specific mode by setting the `pos_tracking.pos_tracking_mode` parameter to `GEN_1`, `GEN_2`, or `GEN_3` according to their needs and preferences.
+- Modified node behaviors when Positional Tracking is disabled [`pos_tracking.pos_tracking_enabled: false`]:
+
+  - `publish_tf` is automatically disabled.
+  - The `odom` related topics are no longer advertised.
+  - The `pose` related topics are no longer advertised.
+  - The GNSS fusion is automatically disabled.
+  - The Plane Detection is automatically disabled.
+  - The Positional Tracking services are no longer advertised.
+  - Depth stability follows the ZED SDK behaviors.
+  - Object Tracking follows the ZED SDK behaviors.
+  - Body Tracking follows the ZED SDK behaviors.
+
+- Add new parameter `debug.debug_dyn_params` to enable debug logs for dynamic parameters changes. 
+
+  - Dynamic parameters related logs are now displayed only if the new debug parameter `debug.debug_dyn_params` is set to `true` to avoid log spam when changing dynamic parameters.
+
+v5.2.1
+------
+- Added the parameter `general.grab_compute_capping_fps` to define a computation upper limit to the grab frequency.
+
+  - This can be useful to get a known constant fixed rate or limit the computation load while keeping a short exposure time by setting a high camera capture framerate.
+  - If set to 0, the grab compute capping will be disabled, and the ZED SDK will process data at the grab rate.
+- URDF now belongs to the `zed_description` package, which is now a dependency of the `zed_wrapper` package. This allows to use the URDF files of the ZED ROS2 Wrapper in other packages without depending on the whole wrapper.
+
+  - The `zed_description` is available in binary form for ROS 2 Humble, Jazzy, and Rolling and can be installed with `sudo apt install ros-$ROS_DISTRO-zed-description`
+
+v5.2.0
+------
+- Removed the `zed_wrapper/urdf/include/materials.urdf.xacro` file and moved the material settings directly in the `zed_macro.urdf.xacro` file to avoid possible conflicts in multi-camera configurations. Thx @davesarmoury for the fix
+- Added the `enable_localization_only` parameter to the configuration to allow the camera to localize in the loaded area memory without updating the map with new information.
+- Added support for the ZED SDK Positional Tracking 2D mode if the SDK version is 5.1 or higher.
+- Added the `zed_debug` package for debugging ZED Components by loading them in a single C++ process.
+- Add `enable_depth` service to disable depth processing at runtime
+- Positional Tracking `GEN_3` is now the default mode when using ZED SDK v5.2 or newer, providing improved stability and performance. The `GEN_2` mode is still available as an option for users who prefer it or need it for specific use cases.
+- When using GEN_3 with ZED SDK v5.2 or newer, Positional Tracking continues to provide localization feedback even if depth is disabled at runtime or when the node starts by setting the `depth.depth_mode` parameter to `NONE`.
+- New diagnostic information regarding Positional Tracking status: "Mode", "Odometry Status", "Spatial Memory Status", "Tracking Fusion Status".
+
 v5.1.0
 ------
 - Changed ZED Camera image topic names to match the cleaner convention used by ZED X One cameras:
