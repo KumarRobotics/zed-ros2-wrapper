@@ -241,6 +241,8 @@ protected:
 
   // ----> Thread functions
   void threadFunc_zedGrab();
+  // Open the camera holding a host-wide lock: one GMSL camera opening at a time.
+  sl::ERROR_CODE openCameraSerialized(int attempts);
   void threadFunc_pubSensorsData();
   // <---- Threads functions
 

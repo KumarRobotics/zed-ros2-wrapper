@@ -16,6 +16,10 @@
 #include "sl_logging.hpp"
 
 #include <rclcpp/time.hpp>
+
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #include <rclcpp/utilities.hpp>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -844,6 +848,42 @@ void ZedCameraOne::initServices()
   }
 }
 
+sl::ERROR_CODE ZedCameraOne::openCameraSerialized(int attempts)
+{
+  // Opening several GMSL ZED X One cameras at the same time makes the camera
+  // still in setup fail (CAMERA FAILED TO SETUP / STREAM FAILED TO START): the
+  // later open's device search hits it ("Device 0 (of 1) is in use" in
+  // nvargus-daemon). Serialize opens across processes with an exclusive lock;
+  // this covers staggered startup, respawns and simultaneous recoveries.
+  const char * lock_path = "/tmp/zed_open.lock";
+  sl::ERROR_CODE status = sl::ERROR_CODE::FAILURE;
+  for (int attempt = 1; attempt <= attempts && rclcpp::ok(); ++attempt) {
+    const int lock_fd = ::open(lock_path, O_CREAT | O_RDWR | O_CLOEXEC, 0666);
+    if (lock_fd < 0) {
+      RCLCPP_WARN(get_logger(), "Cannot open %s; opening the camera without serialization", lock_path);
+    } else if (::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+      RCLCPP_INFO(get_logger(), "Another ZED camera is opening; waiting for it to finish");
+      while (::flock(lock_fd, LOCK_EX) != 0 && errno == EINTR) {}
+    }
+    status = _zed->open(_initParams);
+    if (lock_fd >= 0) {
+      ::flock(lock_fd, LOCK_UN);
+      ::close(lock_fd);
+    }
+    if (status == sl::ERROR_CODE::SUCCESS || attempt == attempts ||
+      status == sl::ERROR_CODE::INVALID_CALIBRATION_FILE)
+    {
+      break;
+    }
+    RCLCPP_WARN(
+      get_logger(), "Camera open attempt %d/%d failed: %s; retrying in 2 s",
+      attempt, attempts, sl::toString(status).c_str());
+    _zed->close();
+    rclcpp::sleep_for(2s);
+  }
+  return status;
+}
+
 bool ZedCameraOne::startCamera()
 {
   RCLCPP_INFO(get_logger(), "=== STARTING CAMERA ===");
@@ -1002,7 +1042,8 @@ bool ZedCameraOne::openZedCamera()
   }
 #endif
 
-  _connStatus = _zed->open(_initParams);
+  // One attempt: a failed open exits and the process is respawned.
+  _connStatus = openCameraSerialized(1);
 
   if (_connStatus != sl::ERROR_CODE::SUCCESS) {
 
@@ -2145,6 +2186,22 @@ bool ZedCameraOne::performCameraGrab()
     } else if (_grabStatus == sl::ERROR_CODE::CAMERA_NOT_INITIALIZED ||
       _grabStatus == sl::ERROR_CODE::FAILURE)
     {
+      // NOT_INITIALIZED means the camera session is gone (e.g. nvargus-daemon was
+      // restarted after a CSI error): grab() alone can never recover it. Exit so
+      // the process is restarted and the camera reopened.
+      // NOT_INITIALIZED means the camera's Argus session is gone (nvargus-daemon
+      // restarted, e.g. after a CSI CRC error). grab() never recovers it, and an
+      // in-process close()/open() on it was measured to hang or to crash
+      // nvargus-daemon. Exit at once: every camera sees the loss at the same
+      // moment, so all of them leave together (one Argus cleanup instead of a
+      // cascade) and the launch file respawns and reopens them one at a time.
+      if (_grabStatus == sl::ERROR_CODE::CAMERA_NOT_INITIALIZED) {
+        RCLCPP_ERROR(
+          get_logger(), "Camera session lost (CAMERA NOT INITIALIZED); exiting so the camera "
+          "is reopened by a process restart");
+        _zed.reset();
+        exit(EXIT_FAILURE);
+      }
       RCLCPP_ERROR_STREAM(
         get_logger(), "Camera issue detected: "
           << sl::toString(_grabStatus).c_str() << ". " << sl::toVerbose(_grabStatus).c_str()
