@@ -1008,7 +1008,11 @@ void ZedCameraOne::applyExposure()
     };
 
   if (_camAutoExposure) {
-    if (_camDynParMapChanged["video.auto_exposure"]) {
+    // Only restore the full range when coming from manual exposure (range
+    // collapsed to one value); otherwise keep the configured AE range.
+    if (_camDynParMapChanged["video.auto_exposure"] &&
+      _camAutoExpTimeRangeMin == _camAutoExpTimeRangeMax)
+    {
       set_parameters(
         {
           rclcpp::Parameter("video.auto_exposure_time_range_min", 28),
